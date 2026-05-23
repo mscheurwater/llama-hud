@@ -61,8 +61,9 @@ pub fn parse_prometheus(body: &str) -> PrometheusMetrics {
 }
 
 pub fn start_prometheus_poller(
-    base_url: String,
     poll_ms: u64,
+    error_tx: tokio::sync::mpsc::Sender<String>,
+    shared_url: std::sync::Arc<std::sync::Mutex<String>>,
 ) -> tokio::sync::mpsc::Receiver<PrometheusMetrics> {
     let (tx, rx) = tokio::sync::mpsc::channel(8);
 
@@ -75,18 +76,38 @@ pub fn start_prometheus_poller(
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(poll_ms)).await;
 
+            let base_url = shared_url.lock().unwrap().clone();
             let url = format!("{}/metrics", base_url);
-            let body = match client.get(&url).send().await {
-                Ok(resp) => match resp.text().await {
-                    Ok(text) => text,
-                    Err(_) => continue,
-                },
-                Err(_) => continue,
-            };
-
-            let metrics = parse_prometheus(&body);
-            if tx.send(metrics).await.is_err() {
-                break;
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if !status.is_success() {
+                        let _ = error_tx.send(format!("Server returned {}", status)).await;
+                        continue;
+                    }
+                    match resp.text().await {
+                        Ok(text) => {
+                            let metrics = parse_prometheus(&text);
+                            if tx.send(metrics).await.is_err() {
+                                break;
+                            }
+                            let _ = error_tx.send(String::new()).await;
+                        }
+                        Err(e) => {
+                            let _ = error_tx.send(format!("Bad response from /metrics: {}", e)).await;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let msg = if e.is_connect() {
+                        "Connection refused — is llama-server running?".to_string()
+                    } else if e.is_timeout() {
+                        "Request timed out".to_string()
+                    } else {
+                        format!("Cannot reach server: {}", e)
+                    };
+                    let _ = error_tx.send(msg).await;
+                }
             }
         }
     });

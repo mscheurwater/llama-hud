@@ -1,8 +1,11 @@
 [package]
 name = "llama-hud"
-version = "0.1.0"
+version = "0.1.5"
 edition = "2024"
 description = "btop-style terminal dashboard for llama-server"
+license = "MIT"
+repository = "https://github.com/mscheurwater/llama-hud"
+homepage = "https://github.com/mscheurwater/llama-hud"
 
 [dependencies]
 ratatui = "0.30"
@@ -19,3 +22,7 @@ ctrlc = "3"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+[profile.release]
+strip = true
+opt-level = 3
