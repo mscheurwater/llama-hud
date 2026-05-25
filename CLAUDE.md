@@ -4,7 +4,7 @@
 
 `llama-hud` — btop-style terminal dashboard for monitoring `llama-server`.
 
-**Built with:** Rust, ratatui 0.29, crossterm 0.28, tokio 1, reqwest 0.12.
+**Built with:** Rust, ratatui 0.30, crossterm 0.29, tokio 1, reqwest 0.12.
 
 ## Rules
 
@@ -106,8 +106,8 @@ src/
 
 ### Dependencies
 
-- ratatui 0.29 — TUI framework
-- crossterm 0.28 — terminal control
+- ratatui 0.30 — TUI framework
+- crossterm 0.29 — terminal control
 - tokio 1 (rt-multi-thread, time, macros, sync) — async runtime
 - serde + serde_json — config serialization
 - regex 1 — log parsing (single pattern)

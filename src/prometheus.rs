@@ -64,14 +64,17 @@ pub fn start_prometheus_poller(
     poll_ms: u64,
     error_tx: tokio::sync::mpsc::Sender<String>,
     shared_url: std::sync::Arc<std::sync::Mutex<String>>,
-) -> tokio::sync::mpsc::Receiver<PrometheusMetrics> {
+) -> (
+    tokio::sync::mpsc::Receiver<PrometheusMetrics>,
+    tokio::task::JoinHandle<()>,
+) {
     let (tx, rx) = tokio::sync::mpsc::channel(8);
 
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
-            .unwrap_or_default();
+            .expect("Failed to build HTTP client");
 
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(poll_ms)).await;
@@ -94,7 +97,9 @@ pub fn start_prometheus_poller(
                             let _ = error_tx.send(String::new()).await;
                         }
                         Err(e) => {
-                            let _ = error_tx.send(format!("Bad response from /metrics: {}", e)).await;
+                            let _ = error_tx
+                                .send(format!("Bad response from /metrics: {}", e))
+                                .await;
                         }
                     }
                 }
@@ -112,5 +117,5 @@ pub fn start_prometheus_poller(
         }
     });
 
-    rx
+    (rx, handle)
 }

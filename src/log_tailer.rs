@@ -10,10 +10,10 @@ use tokio::sync::mpsc;
 pub fn start_tailing(
     session: String,
     running: Arc<AtomicBool>,
-) -> mpsc::Receiver<String> {
+) -> (mpsc::Receiver<String>, tokio::task::JoinHandle<()>) {
     let (tx, rx) = mpsc::channel(256);
 
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let mut last_lines: Vec<String> = Vec::new();
 
         while running.load(Ordering::SeqCst) {
@@ -47,26 +47,34 @@ pub fn start_tailing(
                     let wtrimmed: Vec<&str> = w.iter().map(|s| s.as_str()).collect();
                     needle.iter().zip(wtrimmed.iter()).all(|(a, b)| a == b)
                 });
-                found.map(|i| i + 3).unwrap_or(all.len().saturating_mul(9) / 10)
+                found
+                    .map(|i| i + 3)
+                    .unwrap_or(all.len().saturating_mul(9) / 10)
             } else {
                 all.len().saturating_mul(9) / 10
             };
 
-            let new_lines: Vec<String> = all.iter().skip(start).filter(|l| !l.is_empty()).cloned().collect();
+            let new_lines: Vec<String> = all
+                .iter()
+                .skip(start)
+                .filter(|l| !l.is_empty())
+                .cloned()
+                .collect();
 
             for line in &new_lines {
                 let _ = tx.send(line.clone()).await;
             }
 
             // Keep last 10 lines for tracking
-            last_lines = all.clone();
-            if last_lines.len() > 10 {
-                last_lines.drain(0..last_lines.len() - 10);
-            }
+            last_lines = all
+                .iter()
+                .skip(all.len().saturating_sub(10))
+                .cloned()
+                .collect();
 
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     });
 
-    rx
+    (rx, handle)
 }

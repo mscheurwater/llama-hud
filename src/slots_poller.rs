@@ -88,7 +88,8 @@ impl SlotApiResponse {
         let max_tokens = self
             .params
             .as_ref()
-            .map_or(0i64, |p| p.max_tokens.max(p.n_predict)).max(0) as u64;
+            .map_or(0i64, |p| p.max_tokens.max(p.n_predict))
+            .max(0) as u64;
         let next = self.next_token.as_ref().and_then(|v| v.first());
         SlotSnapshot {
             id: self.id,
@@ -123,14 +124,17 @@ pub fn start_slots_poller(
     poll_ms: u64,
     error_tx: tokio::sync::mpsc::Sender<String>,
     shared_url: std::sync::Arc<std::sync::Mutex<String>>,
-) -> tokio::sync::mpsc::Receiver<Vec<SlotSnapshot>> {
+) -> (
+    tokio::sync::mpsc::Receiver<Vec<SlotSnapshot>>,
+    tokio::task::JoinHandle<()>,
+) {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
 
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()
-            .unwrap_or_default();
+            .expect("Failed to build HTTP client");
 
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(poll_ms)).await;
@@ -146,14 +150,17 @@ pub fn start_slots_poller(
                     }
                     match resp.json::<Vec<SlotApiResponse>>().await {
                         Ok(slots) => {
-                            let snapshots: Vec<SlotSnapshot> = slots.iter().map(|s| s.to_snapshot()).collect();
+                            let snapshots: Vec<SlotSnapshot> =
+                                slots.iter().map(|s| s.to_snapshot()).collect();
                             if tx.send(snapshots).await.is_err() {
                                 break;
                             }
                             let _ = error_tx.send(String::new()).await;
                         }
                         Err(e) => {
-                            let _ = error_tx.send(format!("Bad response from /slots: {}", e)).await;
+                            let _ = error_tx
+                                .send(format!("Bad response from /slots: {}", e))
+                                .await;
                         }
                     }
                 }
@@ -171,5 +178,5 @@ pub fn start_slots_poller(
         }
     });
 
-    rx
+    (rx, handle)
 }

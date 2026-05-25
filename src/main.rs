@@ -60,8 +60,8 @@ fn cleanup_terminal() {
     let _ = stdout.flush();
 }
 
-fn merge_config(cli: &Cli) -> (config::AppConfig, bool) {
-    let (mut cfg, config_exists) = load_config();
+fn merge_config(cli: &Cli) -> (config::AppConfig, bool, Option<String>) {
+    let (mut cfg, config_exists, cfg_error) = load_config();
 
     if let Some(ref url) = cli.url {
         cfg.url = url.clone();
@@ -70,7 +70,7 @@ fn merge_config(cli: &Cli) -> (config::AppConfig, bool) {
         cfg.tmux_session = Some(session.clone());
     }
 
-    (cfg, config_exists)
+    (cfg, config_exists, cfg_error)
 }
 
 #[tokio::main]
@@ -80,7 +80,7 @@ async fn main() {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return;
     }
-    let (cfg, config_exists) = merge_config(&cli);
+    let (cfg, config_exists, cfg_error) = merge_config(&cli);
 
     if setup_terminal().is_err() {
         eprintln!("Failed to setup terminal");
@@ -101,7 +101,7 @@ async fn main() {
         running_clone.store(false, Ordering::SeqCst);
     });
 
-    let result = run(&cfg, config_exists, running.clone()).await;
+    let result = run(&cfg, config_exists, cfg_error, running.clone()).await;
     running.store(false, Ordering::SeqCst);
     cleanup_terminal();
 
@@ -114,12 +114,16 @@ async fn main() {
 async fn run(
     cfg: &config::AppConfig,
     config_exists: bool,
+    cfg_error: Option<String>,
     running: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(std::io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(cfg.clone(), config_exists);
+    if let Some(err) = cfg_error {
+        app.error_message = Some(err);
+    }
 
     // Shared URL — pollers read this, updated when config changes
     let shared_url = std::sync::Arc::new(std::sync::Mutex::new(cfg.base_url().to_string()));
@@ -133,24 +137,24 @@ async fn run(
     let mut current_metrics_poll_ms = cfg.metrics_poll_ms;
     let mut current_tmux_session = cfg.tmux_session.clone();
 
-    // Slots poller
-    let mut slots_rx = slots_poller::start_slots_poller(
-        cfg.slots_poll_ms,
-        error_tx.clone(),
-        shared_url.clone(),
-    );
+    // Slots poller (receiver, join_handle) — abort old handle on config change
+    let (slots_rx, mut slots_handle) =
+        slots_poller::start_slots_poller(cfg.slots_poll_ms, error_tx.clone(), shared_url.clone());
+    let mut slots_rx = slots_rx;
 
     // Prometheus poller
-    let mut prom_rx = prometheus::start_prometheus_poller(
+    let (prom_rx, mut prom_handle) = prometheus::start_prometheus_poller(
         cfg.metrics_poll_ms,
         error_tx.clone(),
         shared_url.clone(),
     );
+    let mut prom_rx = prom_rx;
 
     // Log tailer (optional tmux session)
-    let mut logs_rx = cfg.tmux_session.as_ref().map(|session| {
-        log_tailer::start_tailing(session.clone(), running.clone())
-    });
+    let mut logs_rx = cfg
+        .tmux_session
+        .as_ref()
+        .map(|session| log_tailer::start_tailing(session.clone(), running.clone()));
 
     // Model name fetch — run once in background, set result via channel
     let (model_tx, mut model_rx) = tokio::sync::mpsc::channel(1);
@@ -168,6 +172,8 @@ async fn run(
 
     // Render loop at 100ms
     let tick_rate = Duration::from_millis(100);
+    // Consecutive-success counter for error clearing (clear after 3 clean ticks)
+    let mut consecutive_ok: u32 = 0;
 
     loop {
         if !running.load(Ordering::SeqCst) || !app.running {
@@ -188,22 +194,32 @@ async fn run(
         {
             current_slots_poll_ms = config.slots_poll_ms;
             current_metrics_poll_ms = config.metrics_poll_ms;
-            slots_rx = slots_poller::start_slots_poller(
+            slots_handle.abort();
+            prom_handle.abort();
+            let (new_slots_rx, new_slots_h) = slots_poller::start_slots_poller(
                 config.slots_poll_ms,
                 error_tx.clone(),
                 shared_url.clone(),
             );
-            prom_rx = prometheus::start_prometheus_poller(
+            slots_rx = new_slots_rx;
+            slots_handle = new_slots_h;
+            let (new_prom_rx, new_prom_h) = prometheus::start_prometheus_poller(
                 config.metrics_poll_ms,
                 error_tx.clone(),
                 shared_url.clone(),
             );
+            prom_rx = new_prom_rx;
+            prom_handle = new_prom_h;
         }
         if config.tmux_session != current_tmux_session {
             current_tmux_session = config.tmux_session.clone();
-            logs_rx = config.tmux_session.as_ref().map(|session| {
-                log_tailer::start_tailing(session.clone(), running.clone())
-            });
+            if let Some(ref mut rx) = logs_rx {
+                rx.1.abort();
+            }
+            logs_rx = config
+                .tmux_session
+                .as_ref()
+                .map(|session| log_tailer::start_tailing(session.clone(), running.clone()));
         }
 
         // Process slot updates (non-blocking)
@@ -225,19 +241,25 @@ async fn run(
             prom_ok = true;
         }
 
-        // Error handling: set on error, clear only when both pollers succeed
+        // Error handling: set on error, clear only after 3 consecutive ticks where both pollers succeed
         while let Ok(msg) = error_rx.try_recv() {
             if !msg.is_empty() {
                 app.error_message = Some(msg);
+                consecutive_ok = 0;
             }
         }
         if slots_ok && prom_ok {
-            app.error_message = None;
+            consecutive_ok += 1;
+            if consecutive_ok >= 3 {
+                app.error_message = None;
+            }
+        } else {
+            consecutive_ok = 0;
         }
 
         // Process log lines (non-blocking)
         if let Some(ref mut rx) = logs_rx {
-            while let Ok(line) = rx.try_recv() {
+            while let Ok(line) = rx.0.try_recv() {
                 // Check for expected prompt total
                 if let Some(total) = parser::parse_prompt_expected_total(&line) {
                     // Apply to first active slot
@@ -261,6 +283,7 @@ async fn run(
         }
 
         // Render
+        app.frame_count += 1;
         terminal.draw(|f| widgets::render(f, &app))?;
         tokio::time::sleep(tick_rate).await;
     }

@@ -60,7 +60,7 @@ pub struct Slot {
     pub prompt_tps_window_tokens: u64,
     pub gen_tps_window_start: Option<Instant>,
     pub gen_tps_window_tokens: u64,
-    pub n_prompt_tokens: u64,           // current context size (loaded prompt)
+    pub n_prompt_tokens: u64, // current context size (loaded prompt)
     pub n_prompt_tokens_processed: u64,
     pub n_decoded: u64,
     pub max_tokens: u64,
@@ -138,6 +138,9 @@ pub struct App {
     // Active theme
     pub theme: Theme,
 
+    // Render state
+    pub frame_count: u64,
+
     // Config popup
     pub show_config: bool,
     pub config_field: ConfigField,
@@ -208,6 +211,7 @@ impl App {
             logs: VecDeque::with_capacity(1000),
             log_dedup: (String::new(), String::new(), 0),
             theme,
+            frame_count: 0,
         }
     }
 
@@ -221,8 +225,13 @@ impl App {
 
     /// Process a batch of /slots snapshots, removing slots that no longer exist.
     pub fn update_slots(&mut self, snapshots: Vec<SlotSnapshot>) {
-                let current_ids: HashSet<u32> = snapshots.iter().map(|s| s.id).collect();
-        let removed: Vec<u32> = self.slots.keys().filter(|id| !current_ids.contains(id)).cloned().collect();
+        let current_ids: HashSet<u32> = snapshots.iter().map(|s| s.id).collect();
+        let removed: Vec<u32> = self
+            .slots
+            .keys()
+            .filter(|id| !current_ids.contains(id))
+            .cloned()
+            .collect();
         if !removed.is_empty() {
             for id in &removed {
                 self.slots.remove(id);
@@ -266,17 +275,67 @@ impl App {
             SlotPhase::Prompt
         };
 
+        // Derive "was processing" from prev state (Slot doesn't have is_processing)
+        let was_processing = prev.id_task != 0 && prev.current_task_start.is_some();
+
+        // Track task start: is_processing went from false to true (new task began)
+        let current_task_start = if snapshot.is_processing && !was_processing {
+            Some(Instant::now())
+        } else if !snapshot.is_processing && was_processing {
+            // Task just completed — clear the start time
+            None
+        } else {
+            prev.current_task_start
+        };
+
+        // Detect task completion: is_processing went from true to false
+        // and the slot did work (decoded or processed tokens from previous state).
+        let mut phase = phase;
+        let last_task = if !snapshot.is_processing
+            && was_processing
+            && (prev.n_decoded > 0 || prev.n_prompt_tokens_processed > 0)
+        {
+            phase = SlotPhase::Done;
+
+            let task_start = prev.current_task_start.unwrap_or_else(Instant::now);
+            let duration = task_start.elapsed();
+            let elapsed_secs = duration.as_secs_f64();
+
+            let completed = CompletedTask {
+                n_prompt_tokens: snapshot.n_prompt_tokens,
+                n_decoded: snapshot.n_decoded,
+                duration,
+                avg_prompt_tps: if elapsed_secs > 0.0 {
+                    snapshot.n_prompt_tokens_processed as f64 / elapsed_secs
+                } else {
+                    0.0
+                },
+                avg_gen_tps: if elapsed_secs > 0.0 {
+                    snapshot.n_decoded as f64 / elapsed_secs
+                } else {
+                    0.0
+                },
+            };
+            Some(completed)
+        } else {
+            prev.last_task
+        };
+
         // Compute progress
         let progress = match phase {
             SlotPhase::Prompt => {
-                let done =
-                    snapshot.n_prompt_tokens_processed.saturating_sub(snapshot.n_prompt_tokens_cache) as f64;
+                let done = snapshot
+                    .n_prompt_tokens_processed
+                    .saturating_sub(snapshot.n_prompt_tokens_cache)
+                    as f64;
                 // Prefer log-derived expected total for a stable goal.
                 // Fallback to n_ctx (worst-case, bar undershoots but stays stable).
                 let goal = if let Some(total) = prev.expected_prompt_total {
                     total.saturating_sub(snapshot.n_prompt_tokens_cache) as f64
                 } else {
-                    snapshot.n_ctx.saturating_sub(snapshot.n_prompt_tokens_cache) as f64
+                    snapshot
+                        .n_ctx
+                        .saturating_sub(snapshot.n_prompt_tokens_cache) as f64
                 };
                 if goal > 0.0 { done / goal } else { 1.0 }
             }
@@ -291,11 +350,16 @@ impl App {
         // Reset window only on phase change, not on 0-delta ticks between GPU chunks.
         let now = Instant::now();
 
-        let (prompt_tps, prompt_window_start, prompt_window_tokens) = if phase == SlotPhase::Prompt {
+        let (prompt_tps, prompt_window_start, prompt_window_tokens) = if phase == SlotPhase::Prompt
+        {
             let window_start = prev.prompt_tps_window_start.unwrap_or(now);
             let accumulated = prev.prompt_tps_window_tokens + prompt_delta;
             let elapsed = now.duration_since(window_start).as_secs_f64();
-            let tps = if elapsed > 0.0 { accumulated as f64 / elapsed } else { 0.0 };
+            let tps = if elapsed > 0.0 {
+                accumulated as f64 / elapsed
+            } else {
+                0.0
+            };
             (tps, Some(window_start), accumulated)
         } else {
             // Phase changed — reset window
@@ -306,7 +370,11 @@ impl App {
             let window_start = prev.gen_tps_window_start.unwrap_or(now);
             let accumulated = prev.gen_tps_window_tokens + gen_delta;
             let elapsed = now.duration_since(window_start).as_secs_f64();
-            let tps = if elapsed > 0.0 { accumulated as f64 / elapsed } else { 0.0 };
+            let tps = if elapsed > 0.0 {
+                accumulated as f64 / elapsed
+            } else {
+                0.0
+            };
             (tps, Some(window_start), accumulated)
         } else {
             // Phase changed — reset window
@@ -337,8 +405,8 @@ impl App {
             n_prompt_tokens_cache: snapshot.n_prompt_tokens_cache,
             id_task: snapshot.id_task,
             params: snapshot.params,
-            last_task: prev.last_task,
-            current_task_start: prev.current_task_start,
+            last_task,
+            current_task_start,
             selected: self.selected_slot == Some(snapshot.id),
         };
 
@@ -393,9 +461,10 @@ impl App {
         } else {
             // Flush previous: remove suffix if count was 1
             if self.log_dedup.2 == 1
-                && let Some(last) = self.logs.back_mut() {
-                    *last = self.log_dedup.1.clone();
-                }
+                && let Some(last) = self.logs.back_mut()
+            {
+                *last = self.log_dedup.1.clone();
+            }
             self.log_dedup = (key.clone(), line.clone(), 1);
             self.logs.push_back(line);
             if self.logs.len() > 1000 {
@@ -419,11 +488,13 @@ impl App {
             KeyCode::Char('2') => self.show_slots = !self.show_slots,
             KeyCode::Char('3') => {
                 self.show_slot_detail = !self.show_slot_detail;
-                if self.show_slot_detail && self.selected_slot.is_none()
-                    && let Some(first_id) = self.slots.keys().cloned().min() {
-                        self.selected_slot = Some(first_id);
-                        self.update_selection();
-                    }
+                if self.show_slot_detail
+                    && self.selected_slot.is_none()
+                    && let Some(first_id) = self.slots.keys().cloned().min()
+                {
+                    self.selected_slot = Some(first_id);
+                    self.update_selection();
+                }
             }
             KeyCode::Char('4') => self.show_logs = !self.show_logs,
             KeyCode::Down => self.select_next_slot(),
@@ -443,7 +514,11 @@ impl App {
         }
     }
 
-    fn handle_config_key(&mut self, code: crossterm::event::KeyCode, _key: &crossterm::event::KeyEvent) {
+    fn handle_config_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+        _key: &crossterm::event::KeyEvent,
+    ) {
         use crossterm::event::KeyCode;
 
         match code {
@@ -541,11 +616,10 @@ impl App {
         cfg.theme = self.config_edits.theme.clone();
 
         // Update shared URL for live poller updates
-        if url_changed
-            && let Some(ref shared) = self.shared_url {
-                let mut url = shared.lock().unwrap();
-                *url = cfg.base_url().to_string();
-            }
+        if url_changed && let Some(ref shared) = self.shared_url {
+            let mut url = shared.lock().unwrap();
+            *url = cfg.base_url().to_string();
+        }
 
         // Apply theme immediately
         self.theme = crate::theme::get_theme(&cfg.theme);
@@ -554,7 +628,7 @@ impl App {
 
         // Write to disk
         if let Err(e) = self.write_config() {
-            eprintln!("Failed to save config: {}", e);
+            self.error_message = Some(format!("Failed to save config: {}", e));
         }
     }
 
@@ -580,8 +654,14 @@ impl App {
         if ids.is_empty() {
             return;
         }
-        let current = self.selected_slot.unwrap_or(ids[0]);
-        if let Some(pos) = ids.iter().position(|&id| id == current) {
+        if self.selected_slot.is_none() {
+            self.selected_slot = Some(ids[0]);
+            self.update_selection();
+            return;
+        }
+        if let Some(current) = self.selected_slot
+            && let Some(pos) = ids.iter().position(|&id| id == current)
+        {
             let next = (pos + 1) % ids.len();
             self.selected_slot = Some(ids[next]);
         }

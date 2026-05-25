@@ -60,19 +60,36 @@ impl AppConfig {
     }
 }
 
-pub fn load_config() -> (AppConfig, bool) {
+pub fn load_config() -> (AppConfig, bool, Option<String>) {
     let path = expand_tilde(CONFIG_FILE);
     let exists = path.exists();
 
     if !exists {
-        return (AppConfig::default(), false);
+        return (AppConfig::default(), false, None);
     }
 
-    let cfg = match std::fs::read_to_string(&path) {
-        Ok(content) => serde_json::from_str::<AppConfig>(&content).unwrap_or_default(),
-        Err(_) => AppConfig::default(),
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                AppConfig::default(),
+                true,
+                Some(format!("Failed to read config file: {e}")),
+            );
+        }
     };
-    (cfg, true)
+
+    let cfg = match serde_json::from_str::<AppConfig>(&content) {
+        Ok(c) => c,
+        Err(e) => {
+            return (
+                AppConfig::default(),
+                true,
+                Some(format!("Failed to parse config: {e}")),
+            );
+        }
+    };
+    (cfg, true, None)
 }
 
 fn expand_tilde(path: &str) -> PathBuf {
