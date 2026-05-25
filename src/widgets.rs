@@ -490,10 +490,23 @@ fn render_slot_line<'a>(
                 format!("{}", SlotPhase::Prompt),
                 theme.phase_style(&slot.phase),
             ));
-            let fill = (slot.progress * bar_width as f64) as usize;
-            let empty = bar_width.saturating_sub(fill);
+
+            let fill = if slot.n_prompt_tokens_cache > 0 {
+                bar_width.saturating_sub(1)
+            } else {
+                bar_width
+            };
+            let bar_fill = (slot.progress * fill as f64) as usize;
+            let empty = fill.saturating_sub(bar_fill);
+
+            if slot.n_prompt_tokens_cache > 0 {
+                parts.push(Span::styled(
+                    "⚡".to_string(),
+                    Style::default().fg(theme.warning),
+                ));
+            }
             parts.push(Span::styled(
-                BAR_FILL.repeat(fill),
+                BAR_FILL.repeat(bar_fill),
                 Style::default().fg(theme.prompt),
             ));
             parts.push(Span::styled(
@@ -520,9 +533,12 @@ fn render_slot_line<'a>(
                 }
             }
             if slot.n_prompt_tokens_cache > 0 {
+                let total = slot.expected_prompt_total.unwrap_or(slot.n_prompt_tokens);
+                let ratio = if total > 0 { slot.n_prompt_tokens_cache as f64 / total as f64 * 100.0 } else { 0.0 };
                 parts.push(Span::styled(
                     format!(
-                        " ⚡{}",
+                        " ⚡{:.0}% {}",
+                        ratio,
                         crate::app::format_tokens(slot.n_prompt_tokens_cache)
                     ),
                     Style::default().fg(theme.warning),
@@ -534,6 +550,7 @@ fn render_slot_line<'a>(
                 format!("{}", SlotPhase::Generation),
                 theme.phase_style(&slot.phase),
             ));
+
             let fill = (slot.progress * bar_width as f64) as usize;
             let empty = bar_width.saturating_sub(fill);
             parts.push(Span::styled(
@@ -554,9 +571,12 @@ fn render_slot_line<'a>(
                 Style::default().fg(theme.generation),
             ));
             if slot.n_prompt_tokens_cache > 0 {
+                let total = slot.expected_prompt_total.unwrap_or(slot.n_prompt_tokens);
+                let ratio = if total > 0 { slot.n_prompt_tokens_cache as f64 / total as f64 * 100.0 } else { 0.0 };
                 parts.push(Span::styled(
                     format!(
-                        " ⚡{}",
+                        " ⚡{:.0}% {}",
+                        ratio,
                         crate::app::format_tokens(slot.n_prompt_tokens_cache)
                     ),
                     Style::default().fg(theme.warning),
