@@ -83,9 +83,6 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         &app.model_name
     };
 
-    let now = chrono::Local::now();
-    let time = format!("{:02}:{:02}:{:02}", now.hour(), now.minute(), now.second());
-
     let pulse = match app.last_metrics_time {
         Some(t) if t.elapsed() < std::time::Duration::from_secs(1) => "◉",
         _ => "●",
@@ -106,8 +103,6 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let right = Line::from(vec![
         Span::styled("Uptime: ", Style::default().fg(app.theme.dim)),
         Span::raw(app.uptime_str()),
-        Span::raw("  "),
-        Span::styled(time, Style::default().fg(app.theme.dim)),
     ]);
 
     let chunks =
