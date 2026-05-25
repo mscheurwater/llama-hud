@@ -1,6 +1,6 @@
 //! Application state — slots, metrics history, server info.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::config::AppConfig;
@@ -219,7 +219,28 @@ impl App {
         }
     }
 
-    /// Process a /slots snapshot update.
+    /// Process a batch of /slots snapshots, removing slots that no longer exist.
+    pub fn update_slots(&mut self, snapshots: Vec<SlotSnapshot>) {
+                let current_ids: HashSet<u32> = snapshots.iter().map(|s| s.id).collect();
+        let removed: Vec<u32> = self.slots.keys().filter(|id| !current_ids.contains(id)).cloned().collect();
+        if !removed.is_empty() {
+            for id in &removed {
+                self.slots.remove(id);
+            }
+            // Reset selection (and detail panel) if selected slot was removed
+            if let Some(ref sel) = self.selected_slot
+                && removed.contains(sel)
+            {
+                self.selected_slot = None;
+                self.show_slot_detail = false;
+            }
+        }
+        for snapshot in snapshots {
+            self.update_slot(snapshot);
+        }
+    }
+
+    /// Process a single /slots snapshot update (called by update_slots).
     pub fn update_slot(&mut self, snapshot: SlotSnapshot) {
         let prev = self.slots.get(&snapshot.id).cloned().unwrap_or_default();
 
@@ -427,7 +448,8 @@ impl App {
 
         match code {
             KeyCode::Esc | KeyCode::Char('q') => {
-                // Discard changes and close
+                // Discard changes and restore theme
+                self.theme = crate::theme::get_theme(&self.config.theme);
                 self.show_config = false;
             }
             KeyCode::Enter => {
@@ -613,5 +635,15 @@ pub fn format_tps(tps: f64) -> String {
         format!("{:.0} t/s", tps)
     } else {
         format!("{:.1} t/s", tps)
+    }
+}
+
+pub fn format_eta(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        format!("{}m {}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
     }
 }

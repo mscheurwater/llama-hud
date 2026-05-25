@@ -209,9 +209,7 @@ async fn run(
         // Process slot updates (non-blocking)
         let mut slots_ok = false;
         while let Ok(snapshots) = slots_rx.try_recv() {
-            for snapshot in snapshots {
-                app.update_slot(snapshot);
-            }
+            app.update_slots(snapshots);
             slots_ok = true;
             // First successful poll = server is running
             if app.server_state == app::ServerState::Unknown {

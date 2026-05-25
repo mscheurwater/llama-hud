@@ -481,11 +481,21 @@ fn render_slot_line<'a>(slot: &'a crate::app::Slot, bar_width: usize, theme: &'a
                 format!(" {}", crate::app::format_tokens(slot.n_prompt_tokens)),
                 Style::default().fg(theme.dim),
             ));
-            parts.push(Span::raw(format!(" {:>4.0}%", slot.progress * 100.0)));
+            parts.push(Span::raw(format!(" {:.0}%", slot.progress * 100.0)));
             parts.push(Span::styled(
                 format!(" {}", crate::app::format_tps(slot.prompt_tps)),
                 Style::default().fg(theme.prompt),
             ));
+            if let Some(total) = slot.expected_prompt_total {
+                let remaining = total.saturating_sub(slot.n_prompt_tokens_processed);
+                if slot.prompt_tps > 0.0 {
+                    let eta_secs = remaining as f64 / slot.prompt_tps;
+                    parts.push(Span::styled(
+                        format!(" ({})", crate::app::format_eta(eta_secs as u64)),
+                        Style::default().fg(theme.dim),
+                    ));
+                }
+            }
             if slot.n_prompt_tokens_cache > 0 {
                 parts.push(Span::styled(
                     format!(
@@ -515,7 +525,7 @@ fn render_slot_line<'a>(slot: &'a crate::app::Slot, bar_width: usize, theme: &'a
                 format!(" {}", crate::app::format_tokens(slot.n_prompt_tokens)),
                 Style::default().fg(theme.dim),
             ));
-            parts.push(Span::raw(format!(" {:>4.0}%", slot.progress * 100.0)));
+            parts.push(Span::raw(format!(" {:.0}%", slot.progress * 100.0)));
             parts.push(Span::styled(
                 format!(" {}", crate::app::format_tps(slot.gen_tps)),
                 Style::default().fg(theme.generation),
@@ -693,7 +703,7 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(vec![Span::styled(
-            "³ LOG",
+            "⁴ LOG",
             Style::default().fg(app.theme.border).bold(),
         )])
         .border_style(app.theme.border_style());
