@@ -2,7 +2,7 @@
 
 ## Project
 
-`llama-hud` — btop-style terminal dashboard for monitoring `llama-server`. Fresh project, replacing the older `llamaRtui` at `/home/mark/Projects/llamaRtui/`.
+`llama-hud` — btop-style terminal dashboard for monitoring `llama-server`.
 
 **Built with:** Rust, ratatui 0.29, crossterm 0.28, tokio 1, reqwest 0.12.
 
@@ -116,13 +116,4 @@ src/
 - clap 4 (derive) — CLI args
 - ctrlc 3 — graceful shutdown
 
-### Notes
 
-- `config_editor.rs` is dead code — config editing is handled inline in `app.rs`
-- `clippy = "warn"` + `pedantic = "warn"` in Cargo.toml
-
-### Old project (reference only)
-
-`/home/mark/Projects/llamaRtui/` — the original. Structural inspiration but being replaced. Key differences:
-- Old: log-driven, regex-heavy, 1Hz refresh, server management, no slot selection
-- New: API-driven, single regex, 100ms refresh, monitor-only, slot selection with detail panel
