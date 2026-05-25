@@ -1,14 +1,13 @@
 //! Ratatui widgets — btop-style rendering.
 
-use chrono::Timelike;
 use ratatui::prelude::*;
-use ratatui::widgets::Padding;
 use ratatui::symbols;
 use ratatui::widgets::BorderType;
+use ratatui::widgets::Padding;
 use ratatui::widgets::{Axis, Block, Borders, Chart, Dataset, GraphType, Paragraph, Wrap};
 
 use crate::app::{App, ConfigField, ServerState, SlotPhase};
-use crate::theme::{Theme, BAR_EMPTY, BAR_FILL};
+use crate::theme::{BAR_EMPTY, BAR_FILL, Theme};
 
 // --- Main render ---
 
@@ -105,8 +104,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         Span::raw(app.uptime_str()),
     ]);
 
-    let chunks =
-        Layout::horizontal([Constraint::Min(0), Constraint::Length(20)]).split(area);
+    let chunks = Layout::horizontal([Constraint::Min(0), Constraint::Length(20)]).split(area);
     frame.render_widget(Paragraph::new(left).style(Style::default()), chunks[0]);
     frame.render_widget(
         Paragraph::new(right).alignment(ratatui::layout::Alignment::Right),
@@ -146,7 +144,8 @@ fn render_stats_rows(frame: &mut Frame, app: &App, area: Rect) {
         let msg = Paragraph::new(Line::from(vec![
             Span::styled("⚠ ", Style::default().fg(app.theme.error)),
             Span::styled(err.as_str(), Style::default().fg(app.theme.error).bold()),
-        ])).alignment(ratatui::layout::Alignment::Center);
+        ]))
+        .alignment(ratatui::layout::Alignment::Center);
         let center = Layout::vertical([
             Constraint::Min(0),
             Constraint::Length(1),
@@ -249,10 +248,16 @@ fn render_charts(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_total_tokens_chart(frame: &mut Frame, app: &App, area: Rect) {
-    let prompt_hist: Vec<f64> =
-        app.prompt_tokens_total_history.iter().map(|&v| v as f64).collect();
-    let gen_hist: Vec<f64> =
-        app.predicted_tokens_total_history.iter().map(|&v| v as f64).collect();
+    let prompt_hist: Vec<f64> = app
+        .prompt_tokens_total_history
+        .iter()
+        .map(|&v| v as f64)
+        .collect();
+    let gen_hist: Vec<f64> = app
+        .predicted_tokens_total_history
+        .iter()
+        .map(|&v| v as f64)
+        .collect();
 
     let fmt = |v: f64| -> String {
         let s = if v >= 1_000_000.0 {
@@ -265,7 +270,15 @@ fn render_total_tokens_chart(frame: &mut Frame, app: &App, area: Rect) {
         format!("{:>5}", s)
     };
 
-    render_dual_chart(frame, area, &prompt_hist, &gen_hist, &fmt, &app.theme, "TOTAL TOKENS");
+    render_dual_chart(
+        frame,
+        area,
+        &prompt_hist,
+        &gen_hist,
+        &fmt,
+        &app.theme,
+        "TOTAL TOKENS",
+    );
 }
 
 fn render_throughput_chart(frame: &mut Frame, app: &App, area: Rect) {
@@ -281,7 +294,15 @@ fn render_throughput_chart(frame: &mut Frame, app: &App, area: Rect) {
         format!("{:>5}", s)
     };
 
-    render_dual_chart(frame, area, &prompt_hist, &gen_hist, &fmt, &app.theme, "THROUGHPUT (t/s)");
+    render_dual_chart(
+        frame,
+        area,
+        &prompt_hist,
+        &gen_hist,
+        &fmt,
+        &app.theme,
+        "THROUGHPUT (t/s)",
+    );
 }
 
 /// Single chart: prompt grows up from bottom, decoded grows down from top.
@@ -333,7 +354,9 @@ fn render_dual_chart<'a, F>(
             .style(Style::default().fg(theme.dim))
             .data(&center_data);
 
-        let x_axis = Axis::default().style(theme.dim_style()).bounds([0.0, width as f64]);
+        let x_axis = Axis::default()
+            .style(theme.dim_style())
+            .bounds([0.0, width as f64]);
         let y_axis = Axis::default()
             .style(theme.dim_style())
             .bounds([0.0, y_scale])
@@ -374,7 +397,9 @@ fn render_dual_chart<'a, F>(
             .style(Style::default().fg(theme.dim))
             .data(&center_data);
 
-        let x_axis = Axis::default().style(theme.dim_style()).bounds([0.0, width as f64]);
+        let x_axis = Axis::default()
+            .style(theme.dim_style())
+            .bounds([0.0, width as f64]);
         let y_axis = Axis::default()
             .style(theme.dim_style())
             .bounds([0.0, y_scale])
@@ -410,8 +435,7 @@ fn render_slots_panel(frame: &mut Frame, app: &App, area: Rect) {
     let show_detail = app.show_slot_detail && !app.slots.is_empty();
 
     if show_detail && inner.width > 60 {
-        let chunks =
-            Layout::horizontal([Constraint::Min(0), Constraint::Length(36)]).split(inner);
+        let chunks = Layout::horizontal([Constraint::Min(0), Constraint::Length(36)]).split(inner);
         render_slots_list(frame, app, chunks[0]);
         render_slot_detail(frame, app, chunks[1]);
     } else {
@@ -445,7 +469,11 @@ fn render_slots_list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(para, area);
 }
 
-fn render_slot_line<'a>(slot: &'a crate::app::Slot, bar_width: usize, theme: &'a Theme) -> Line<'a> {
+fn render_slot_line<'a>(
+    slot: &'a crate::app::Slot,
+    bar_width: usize,
+    theme: &'a Theme,
+) -> Line<'a> {
     let mut parts: Vec<Span> = Vec::new();
 
     // ID
@@ -525,6 +553,15 @@ fn render_slot_line<'a>(slot: &'a crate::app::Slot, bar_width: usize, theme: &'a
                 format!(" {}", crate::app::format_tps(slot.gen_tps)),
                 Style::default().fg(theme.generation),
             ));
+            if slot.n_prompt_tokens_cache > 0 {
+                parts.push(Span::styled(
+                    format!(
+                        " ⚡{}",
+                        crate::app::format_tokens(slot.n_prompt_tokens_cache)
+                    ),
+                    Style::default().fg(theme.warning),
+                ));
+            }
         }
         SlotPhase::Done => {
             parts.push(Span::styled(
@@ -610,7 +647,10 @@ fn render_slot_detail(frame: &mut Frame, app: &App, area: Rect) {
     let status_lines = vec![
         Line::from(vec![
             Span::styled("Phase:   ", Style::default().fg(app.theme.dim)),
-            Span::styled(format!("{}", slot.phase), app.theme.phase_style(&slot.phase)),
+            Span::styled(
+                format!("{}", slot.phase),
+                app.theme.phase_style(&slot.phase),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Prog:    ", Style::default().fg(app.theme.dim)),
@@ -719,7 +759,12 @@ fn render_logs(frame: &mut Frame, app: &App, area: Rect) {
     let lines: Vec<Line> = app
         .logs
         .iter()
-        .map(|entry| Line::from(vec![Span::styled(entry.as_str(), Style::default().fg(app.theme.dim))]))
+        .map(|entry| {
+            Line::from(vec![Span::styled(
+                entry.as_str(),
+                Style::default().fg(app.theme.dim),
+            )])
+        })
         .collect();
 
     let visible = if lines.len() > visible_count {
@@ -802,37 +847,64 @@ fn render_config_popup(frame: &mut Frame, app: &App, area: Rect) {
     let inner = block.inner(popup_area);
 
     // Split: content area on top, help line fixed at bottom
-    let content_area = Layout::vertical([
-        Constraint::Min(0),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let content_area = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(inner);
 
     let fields = [
         ("Server URL", &app.config_edits.url, ConfigField::Url),
-        ("Tmux session", &app.config_edits.tmux_session, ConfigField::TmuxSession),
-        ("Slots poll (ms)", &app.config_edits.slots_poll_ms, ConfigField::SlotsPollMs),
-        ("Metrics poll (ms)", &app.config_edits.metrics_poll_ms, ConfigField::MetricsPollMs),
-        ("Chart history", &app.config_edits.chart_history, ConfigField::ChartHistory),
+        (
+            "Tmux session",
+            &app.config_edits.tmux_session,
+            ConfigField::TmuxSession,
+        ),
+        (
+            "Slots poll (ms)",
+            &app.config_edits.slots_poll_ms,
+            ConfigField::SlotsPollMs,
+        ),
+        (
+            "Metrics poll (ms)",
+            &app.config_edits.metrics_poll_ms,
+            ConfigField::MetricsPollMs,
+        ),
+        (
+            "Chart history",
+            &app.config_edits.chart_history,
+            ConfigField::ChartHistory,
+        ),
         ("Theme", &app.config_edits.theme, ConfigField::Theme),
     ];
 
-    let blink = (chrono::Utc::now().nanosecond() / 500_000_000).is_multiple_of(2);
-    let cursor = if blink { Span::styled("█", Style::default().fg(app.theme.prompt)) } else { Span::raw(" ") };
+    let blink = app.frame_count.is_multiple_of(2);
+    let cursor = if blink {
+        Span::styled("█", Style::default().fg(app.theme.prompt))
+    } else {
+        Span::raw(" ")
+    };
     let theme_cursor = Span::styled(" ← →", Style::default().fg(app.theme.prompt));
 
     let lines: Vec<Line> = fields
         .iter()
         .map(|(label, value, field)| {
             let is_active = *field == app.config_field;
-            let value_color = if is_active { app.theme.prompt } else { app.theme.dim };
+            let value_color = if is_active {
+                app.theme.prompt
+            } else {
+                app.theme.dim
+            };
             let prefix = if is_active { "> " } else { "  " };
             let mut spans = vec![
-                Span::styled(format!("{}{}: ", prefix, label), Style::default().fg(app.theme.text)),
+                Span::styled(
+                    format!("{}{}: ", prefix, label),
+                    Style::default().fg(app.theme.text),
+                ),
                 Span::styled(value.as_str(), Style::default().fg(value_color)),
             ];
             if is_active {
-                spans.push(if *field == ConfigField::Theme { theme_cursor.clone() } else { cursor.clone() });
+                spans.push(if *field == ConfigField::Theme {
+                    theme_cursor.clone()
+                } else {
+                    cursor.clone()
+                });
             }
             Line::from(spans)
         })
@@ -844,7 +916,9 @@ fn render_config_popup(frame: &mut Frame, app: &App, area: Rect) {
         ConfigField::SlotsPollMs => "How often to poll /slots endpoint in milliseconds",
         ConfigField::MetricsPollMs => "How often to poll /metrics endpoint in milliseconds",
         ConfigField::ChartHistory => "Number of data points to keep in chart history",
-        ConfigField::Theme => "← → cycle: default, nord, gruvbox, catppuccin, dracula, tokyo-night, kanagawa, onedark, horizon, flexoki",
+        ConfigField::Theme => {
+            "← → cycle: default, nord, gruvbox, catppuccin, dracula, tokyo-night, kanagawa, onedark, horizon, flexoki"
+        }
     };
 
     let content: Vec<Line> = lines
@@ -867,4 +941,3 @@ fn render_config_popup(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(help, content_area[1]);
     frame.render_widget(block, popup_area);
 }
-
